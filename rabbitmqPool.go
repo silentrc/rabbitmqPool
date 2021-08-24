@@ -37,7 +37,7 @@ var AmqpServer Service
 
 func InitAmqp(){
 	if AmqpServer.AmqpUrl == "" {
-		log.Fatal("rabbitmq's address can not be empty!")
+		log.Print("rabbitmq's address can not be empty!")
 	}
 	if AmqpServer.ConnectionNum == 0 {
 		AmqpServer.ConnectionNum = 10
@@ -53,7 +53,7 @@ func InitAmqp(){
 
 func failOnError(err error, msg string) {
 	if err != nil {
-		log.Fatal(msg)
+		log.Print(msg)
 	}
 }
 
