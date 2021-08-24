@@ -53,7 +53,7 @@ func InitAmqp(){
 
 func failOnError(err error, msg string) {
 	if err != nil {
-		log.Fatal( msg, err)
+		log.Fatal(msg)
 	}
 }
 
