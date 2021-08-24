@@ -18,7 +18,10 @@ rabbitmqPool.AmqpServer = rabbitmqPool.Service{
 	ChannelNum:100,
 }
 
-rabbitmqPool.InitAmqp()	
+if rabbitmqPool.InitAmqp() {
+	fmt.Println("rabbitmq初始化成功")
+	return
+}
 
 message,err := rabbitmqPool.AmqpServer.PutIntoQueue(ExchangeName,ExchangeType,RouteKey,data)
 if err != nil{
