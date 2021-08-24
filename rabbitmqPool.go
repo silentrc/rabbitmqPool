@@ -15,7 +15,6 @@ type Service struct {
 	AmqpUrl       string  //amqp地址
 	ConnectionNum int     //连接数
 	ChannelNum    int     //每个连接的channel数量
-
 	connections   map[int]*amqp.Connection
 	channels      map[int]channel
 	idelChannels  []int
