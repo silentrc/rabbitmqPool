@@ -58,18 +58,19 @@ func failOnError(err error, msg string) {
 	}
 }
 
-func (S *Service) connectPool() {
+func (S *Service) connectPool() bool {
 	S.connections = make(map[int]*amqp.Connection)
 	for i := 0; i < S.ConnectionNum; i++ {
 		connection, err := S.connect()
 		if err != nil {
-			break
+			return false
 		}
 		S.connections[i] = connection
 	}
+	return true
 }
 
-func (S *Service) channelPool() {
+func (S *Service) channelPool() bool {
 	var err error
 	S.channels = make(map[int]channel)
 	//S.idelChannels = make(map[int]int)
@@ -78,12 +79,13 @@ func (S *Service) channelPool() {
 			key := index*S.ChannelNum + j
 			S.channels[key], err = S.createChannel(index, connection)
 			if err != nil {
-				return
+				return false
 			}
 			//S.idelChannels[key] = key
 			S.idelChannels = append(S.idelChannels, key)
 		}
 	}
+	return true
 }
 
 func (S *Service) connect() (*amqp.Connection, error) {
