@@ -12,9 +12,9 @@ import (
 )
 
 type Service struct {
-	AmqpUrl       string  //amqp地址
-	ConnectionNum int     //连接数
-	ChannelNum    int     //每个连接的channel数量
+	AmqpUrl       string //amqp地址
+	ConnectionNum int    //连接数
+	ChannelNum    int    //每个连接的channel数量
 	connections   map[int]*amqp.Connection
 	channels      map[int]channel
 	idelChannels  []int
@@ -23,19 +23,19 @@ type Service struct {
 }
 
 type channel struct {
-	ch *amqp.Channel
-	notifyClose chan *amqp.Error
+	ch            *amqp.Channel
+	notifyClose   chan *amqp.Error
 	notifyConfirm chan amqp.Confirmation
 }
 
 const (
-	retryCount = 5
-	waitConfirmTime = 3*time.Second
+	retryCount      = 5
+	waitConfirmTime = 3 * time.Second
 )
 
 var AmqpServer Service
 
-func InitAmqp(){
+func InitAmqp() {
 	if AmqpServer.AmqpUrl == "" {
 		log.Print("rabbitmq's address can not be empty!")
 	}
@@ -58,69 +58,83 @@ func failOnError(err error, msg string) {
 	}
 }
 
-func (S *Service) connectPool(){
+func (S *Service) connectPool() {
 	S.connections = make(map[int]*amqp.Connection)
-	for i:=0;i<S.ConnectionNum ;i++ {
-		connection := S.connect()
+	for i := 0; i < S.ConnectionNum; i++ {
+		connection, err := S.connect()
+		if err != nil {
+			break
+		}
 		S.connections[i] = connection
 	}
 }
 
-func (S *Service) channelPool(){
+func (S *Service) channelPool() {
+	var err error
 	S.channels = make(map[int]channel)
 	//S.idelChannels = make(map[int]int)
-	for index,connection := range S.connections{
-		for j:=0;j<S.ChannelNum ;j++ {
-			key := index*S.ChannelNum+j
-			S.channels[key] = S.createChannel(index,connection)
+	for index, connection := range S.connections {
+		for j := 0; j < S.ChannelNum; j++ {
+			key := index*S.ChannelNum + j
+			S.channels[key], err = S.createChannel(index, connection)
+			if err != nil {
+				return
+			}
 			//S.idelChannels[key] = key
-			S.idelChannels = append(S.idelChannels,key)
+			S.idelChannels = append(S.idelChannels, key)
 		}
 	}
 }
 
-func (S *Service) connect()*amqp.Connection{
+func (S *Service) connect() (*amqp.Connection, error) {
 	conn, err := amqp.Dial(S.AmqpUrl)
 	failOnError(err, "Failed to connect to RabbitMQ")
 	//defer conn.Close()
-	return conn
+	return conn, err
 }
 
-func (S *Service) recreateChannel(connectId int, err error)(ch *amqp.Channel){
-	if strings.Index(err.Error(),"channel/connection is not open") >= 0 || strings.Index(err.Error(),"CHANNEL_ERROR - expected 'channel.open'") >=0{
+func (S *Service) recreateChannel(connectId int, err error) (ch *amqp.Channel) {
+	if strings.Index(err.Error(), "channel/connection is not open") >= 0 || strings.Index(err.Error(), "CHANNEL_ERROR - expected 'channel.open'") >= 0 {
 		//S.connections[connectId].Close()
 		var newConn *amqp.Connection
 		if S.connections[connectId].IsClosed() {
-			newConn = S.connect()
-		}else {
+			newConn, err = S.connect()
+			if err != nil {
+				return
+			}
+		} else {
 			newConn = S.connections[connectId]
 		}
-		S.lockWriteConnect(connectId,newConn)
+		S.lockWriteConnect(connectId, newConn)
 		//S.connections[connectId] = newConn
 		ch, err = newConn.Channel()
 		failOnError(err, "Failed to open a channel")
-	}else{
+	} else {
 		failOnError(err, "Failed to open a channel")
 	}
 	return
 }
 
-func (S *Service) lockWriteConnect(connectId int,newConn *amqp.Connection){
+func (S *Service) lockWriteConnect(connectId int, newConn *amqp.Connection) {
 	S.m.Lock()
 	defer S.m.Unlock()
 	S.connections[connectId] = newConn
 }
 
-func (S *Service) createChannel(connectId int,conn *amqp.Connection)channel{
+func (S *Service) createChannel(connectId int, conn *amqp.Connection) (channel, error) {
+	var err error
 	var notifyClose = make(chan *amqp.Error)
 	var notifyConfirm = make(chan amqp.Confirmation)
 
 	cha := channel{
-		notifyClose:notifyClose,
-		notifyConfirm:notifyConfirm,
+		notifyClose:   notifyClose,
+		notifyConfirm: notifyConfirm,
 	}
 	if conn.IsClosed() {
-		conn = S.connect()
+		conn, err = S.connect()
+		if err != nil {
+			return cha, err
+		}
 	}
 	ch, err := conn.Channel()
 	if err != nil {
@@ -138,10 +152,10 @@ func (S *Service) createChannel(connectId int,conn *amqp.Connection)channel{
 	//		fmt.Println("close channel")
 	//	}
 	//}()
-	return cha
+	return cha, err
 }
 
-func (S *Service) getChannel()(*amqp.Channel,int){
+func (S *Service) getChannel() (*amqp.Channel, int) {
 	S.m.Lock()
 	defer S.m.Unlock()
 	idelLength := len(S.idelChannels)
@@ -159,17 +173,17 @@ func (S *Service) getChannel()(*amqp.Channel,int){
 		//fmt.Println("idel channels count: ",len(S.idelChannels))
 		//fmt.Println("busy channels count: ",len(S.busyChannels))
 		//fmt.Println("channel id: ",channelId)
-		return ch,channelId
-	}else{
+		return ch, channelId
+	} else {
 		//return S.createChannel(0,S.connections[0]),-1
-		return nil,-1
+		return nil, -1
 	}
 }
 
-func (S *Service) declareExchange(ch *amqp.Channel,exchangeName string,exchangeType string,channelId int) *amqp.Channel{
+func (S *Service) declareExchange(ch *amqp.Channel, exchangeName string, exchangeType string, channelId int) *amqp.Channel {
 	err := ch.ExchangeDeclare(
 		exchangeName, // name
-		exchangeType,      // type
+		exchangeType, // type
 		true,         // durable
 		false,        // auto-deleted
 		false,        // internal
@@ -177,30 +191,32 @@ func (S *Service) declareExchange(ch *amqp.Channel,exchangeName string,exchangeT
 		nil,          // arguments
 	)
 	if err != nil {
-		ch = S.reDeclareExchange(channelId,exchangeName,exchangeType,err)
+		ch = S.reDeclareExchange(channelId, exchangeName, exchangeType, err)
 	}
 	return ch
 }
 
-func (S *Service) reDeclareExchange(channelId int,exchangeName string,exchangeType string,err error)(ch *amqp.Channel) {
+func (S *Service) reDeclareExchange(channelId int, exchangeName string, exchangeType string, err error) (ch *amqp.Channel) {
 	//fmt.Println("reDeclareExchange")
 
 	var connectionId int
 	if strings.Index(err.Error(), "channel/connection is not open") >= 0 {
 
 		//S.channels[channelId].Close()
-		if channelId == -1{
+		if channelId == -1 {
 			connectionId = 0
-		}else{
-			connectionId = int(channelId/S.ChannelNum)
+		} else {
+			connectionId = int(channelId / S.ChannelNum)
 		}
-		cha := S.createChannel(connectionId,S.connections[connectionId])
-
-		S.lockWriteChannel(channelId,cha)
+		cha, fail := S.createChannel(connectionId, S.connections[connectionId])
+		if fail != nil {
+			return
+		}
+		S.lockWriteChannel(channelId, cha)
 		//S.channels[channelId] = cha
 		err := cha.ch.ExchangeDeclare(
 			exchangeName, // name
-			exchangeType,      // type
+			exchangeType, // type
 			true,         // durable
 			false,        // auto-deleted
 			false,        // internal
@@ -211,20 +227,20 @@ func (S *Service) reDeclareExchange(channelId int,exchangeName string,exchangeTy
 			failOnError(err, "Failed to declare an exchange")
 		}
 		return cha.ch
-	}else{
+	} else {
 
 		failOnError(err, "Failed to declare an exchange")
 		return nil
 	}
 }
 
-func (S *Service) lockWriteChannel(channelId int,cha channel){
+func (S *Service) lockWriteChannel(channelId int, cha channel) {
 	S.m.Lock()
 	defer S.m.Unlock()
 	S.channels[channelId] = cha
 }
 
-func (S *Service) dataForm(notice interface{})string{
+func (S *Service) dataForm(notice interface{}) string {
 	body, err := json.Marshal(notice)
 	if err != nil {
 		log.Panic(err)
@@ -232,7 +248,7 @@ func (S *Service) dataForm(notice interface{})string{
 	return string(body)
 }
 
-func (S *Service) publish(channelId int,ch *amqp.Channel,exchangeName string,exchangeType string, routeKey string,data string)(err error){
+func (S *Service) publish(channelId int, ch *amqp.Channel, exchangeName string, exchangeType string, routeKey string, data string) (err error) {
 
 	err = ch.Publish(
 		exchangeName, // exchange
@@ -241,8 +257,8 @@ func (S *Service) publish(channelId int,ch *amqp.Channel,exchangeName string,exc
 		false,        // immediate
 		amqp.Publishing{
 			DeliveryMode: amqp.Persistent,
-			ContentType: "application/json",
-			Body:        []byte(data),
+			ContentType:  "application/json",
+			Body:         []byte(data),
 		})
 
 	if err != nil {
@@ -253,10 +269,10 @@ func (S *Service) publish(channelId int,ch *amqp.Channel,exchangeName string,exc
 	return
 }
 
-func (S *Service) rePublish(channelId int,exchangeName string,exchangeType string, errmsg error,routeKey string,data string)(err error){
+func (S *Service) rePublish(channelId int, exchangeName string, exchangeType string, errmsg error, routeKey string, data string) (err error) {
 	//fmt.Println("rePublish")
 
-	ch := S.reDeclareExchange(channelId, exchangeName,exchangeType,errmsg )
+	ch := S.reDeclareExchange(channelId, exchangeName, exchangeType, errmsg)
 	err = ch.Publish(
 		exchangeName, // exchange
 		routeKey,     //severityFrom(os.Args), // routing key
@@ -264,57 +280,56 @@ func (S *Service) rePublish(channelId int,exchangeName string,exchangeType strin
 		false,        // immediate
 		amqp.Publishing{
 			DeliveryMode: amqp.Persistent,
-			ContentType: "application/json",
-			Body:        []byte(data),
+			ContentType:  "application/json",
+			Body:         []byte(data),
 		})
 	return
 }
 
-func (S *Service) backChannelId(channelId int,ch *amqp.Channel){
+func (S *Service) backChannelId(channelId int, ch *amqp.Channel) {
 	S.m.Lock()
 	defer S.m.Unlock()
-	S.idelChannels = append(S.idelChannels,channelId)
-	delete(S.busyChannels,channelId)
+	S.idelChannels = append(S.idelChannels, channelId)
+	delete(S.busyChannels, channelId)
 	return
 }
 
-func (S *Service) PutIntoQueue(exchangeName string, exchangeType string, routeKey string, notice interface{}) (message interface{}, puberr error ){
+func (S *Service) PutIntoQueue(exchangeName string, exchangeType string, routeKey string, notice interface{}) (message interface{}, puberr error) {
 	defer func() {
 		msg := recover()
 		if msg != nil {
 			//fmt.Println("msg: ",msg)
-			puberrMsg,_ := msg.(string)
+			puberrMsg, _ := msg.(string)
 			//fmt.Println("ok: ",ok)
 			//fmt.Println("puberrMsg : ",puberrMsg)
 			puberr = errors.New(puberrMsg)
 			return
 		}
 	}()
-
-	ch,channelId := S.getChannel()
+	ch, channelId := S.getChannel()
 	cha := channel{}
 	if ch == nil {
-		cha = S.createChannel(0,S.connections[0])
+		cha, _ = S.createChannel(0, S.connections[0])
 		defer cha.ch.Close()
 		ch = cha.ch
 		//fmt.Println("ch: ",ch)
 	}
-	ch = S.declareExchange(ch,exchangeName,exchangeType,channelId)
+	ch = S.declareExchange(ch, exchangeName, exchangeType, channelId)
 
 	data := S.dataForm(notice)
 	var tryTime = 1
 
-	for  {
-		puberr = S.publish(channelId, ch, exchangeName,exchangeType, routeKey, data)
-		if puberr !=nil {
+	for {
+		puberr = S.publish(channelId, ch, exchangeName, exchangeType, routeKey, data)
+		if puberr != nil {
 			if tryTime <= retryCount {
 				//log.Printf("%s: %s", "Failed to publish a message, try again.", puberr)
-				tryTime ++
+				tryTime++
 				continue
-			}else{
+			} else {
 				//log.Printf("%s: %s data: %s", "Failed to publish a message", puberr,data)
-				S.backChannelId(channelId,ch)
-				return notice,puberr
+				S.backChannelId(channelId, ch)
+				return notice, puberr
 			}
 		}
 
@@ -326,13 +341,13 @@ func (S *Service) PutIntoQueue(exchangeName string, exchangeType string, routeKe
 
 				return notice, nil
 			}
-			return notice,errors.New("ack failed")
+			return notice, errors.New("ack failed")
 		case chaConfirm := <-cha.notifyConfirm:
 			//log.Println("加班车",data)
 			if chaConfirm.Ack {
 				return notice, nil
 			}
-			return notice,errors.New("ack failed")
+			return notice, errors.New("ack failed")
 		case <-time.After(waitConfirmTime):
 			//	log.Printf("message: %s data: %s", "Can not receive the confirm.", data)
 			S.backChannelId(channelId, ch)
