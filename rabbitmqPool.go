@@ -35,7 +35,7 @@ const (
 
 var AmqpServer Service
 
-func InitAmqp() {
+func InitAmqp() bool {
 	if AmqpServer.AmqpUrl == "" {
 		log.Print("rabbitmq's address can not be empty!")
 	}
@@ -47,8 +47,12 @@ func InitAmqp() {
 	}
 	AmqpServer.busyChannels = make(map[int]int)
 	AmqpServer.m = new(sync.Mutex)
-	AmqpServer.connectPool()
-	AmqpServer.channelPool()
+	connRes := AmqpServer.connectPool()
+	channelRes := AmqpServer.channelPool()
+	if connRes && channelRes {
+		return true
+	}
+	return false
 }
 
 func failOnError(err error, msg string) {
